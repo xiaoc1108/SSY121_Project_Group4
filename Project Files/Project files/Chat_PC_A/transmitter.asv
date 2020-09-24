@@ -80,16 +80,11 @@ baseband_signal = noisy_tx_signal.*exp(-1i*2*pi*fc*(0:length(tx_signal)-1)*Tsamp
 %baseband_signal = real(baseband_signal);
 MF = fliplr(conj(pulse));
 MF_output_conv = conv(pulse, baseband_signal);  % Another approach to MF using conv, what's the difference?
-MF_output_conv = MF_output_conv(floor(length(MF)):end-floor(length(MF)+1));
-MF_output = filter(MF,1,baseband_signal);
-MF_output = MF_output(length(MF):end);
+MF_output_conv = MF_output_conv(floor(length(MF)/2):end-floor(length(MF)/2+1));
+onv);
+length(s);
 rx_vec = MF_output_conv(1:fsfd:end);  %get sample points
 scatterplot(rx_vec); %scatterplot of received symbols
-%size(MF)
-%size(MF_output_conv)
-%size(baseband_signal)
-%size(rx_vec)
-%rx_vec
 %scatterplot(x);
 %
 figure

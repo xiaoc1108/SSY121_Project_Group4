@@ -14,7 +14,7 @@
 
 function [audio_recorder] = receiver(fc)
 fc = 3000;
-fs = 5000; %sampling frequency
+fs = 8000; %sampling frequency
 audio_recorder = audiorecorder(fs,24,1);% create the recorder
 
 %attach callback function
@@ -57,7 +57,77 @@ function audioTimerFcn(recObj, event, handles)
 %-----------------------------------------------------------
 disp('Callback triggered')
 
-fs = 5000;                                              % sampling frequency
+N = 432;
+pack = randsrc(1,N,[0 1]);
+fc = 3000;
+
+fs = 8000;                                     %sampling frequency
+B = 200;                                        %1 sided bandwidth [hz]
+Tsamp = 1/fs;                                   %sample time
+alpha = 0.4;                                    %rolloff factor for rrc pulse
+G = (1+alpha)/(2*B);                            %Arbitrary paramater
+k = 2;                                          %integer multiple
+Ts = k*G;                                       %symbol time (for a root raised cosine)
+fsymb = 1/Ts;                                   %symbol rate [symb/s]
+const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);     %qpsk - 2 bits per symbol
+M = length(const);                              %number of symbols (2^2)
+bpsymb = log2(M);                               %bits per symbol
+Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
+fsfd = round(fs/fsymb)+1;                           %samples per symbol
+span = 6;
+
+%Implement root raised cosine pulse
+t_positive = eps:(1/fs):span*Ts;  % Replace 0 with eps (smallest +ve number MATLAB can produce) to prevent NANs
+t = [-fliplr(t_positive(2:end)) t_positive];
+tpi = pi/Ts; amtpi = tpi*(1-alpha); aptpi = tpi*(1 + alpha);
+ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
+pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
+pulse = pulse/norm(pulse);
+
+%[pulse, t] = rtrcpuls(alpha,Ts,fs,span);
+
+%pack(401:end)
+m = buffer(pack, bpsymb)';             %Group 2 bits per symbol (each row will be a symbol)
+m_idx = bi2de(m, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Significant Bit
+x = const(m_idx);                   % Look up symbols using the indices
+x_upsample = upsample(x,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
+s = conv(pulse,x_upsample);         %Baseband signal to transmit
+
+%Modulated tx signal
+tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upconversion 
+tx_signal = real(tx_signal);                        % send real part, information is in amplitude and phase
+tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to 1 to prevent clipping of waveforms
+
+%From here on it is like receiver stuff
+SNR = 10;   %signal to noise ratio
+rx_signal = awgn(tx_signal,SNR,'measured');          
+%rx_signal = tx_signal;
+rx_baseband = rx_signal.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); %down modulate
+%rx_baseband = s;
+MF = fliplr(conj(pulse));        %create matched filter impulse response
+MF_output = filter(MF,1,rx_baseband);      % run received signal through matched filter
+%figure; plot(real(MF_output))
+MF_output = MF_output(length(MF):end); %remove transient
+MF_output_conv = conv(pulse, rx_baseband);  % Another approach to MF using conv, what's the difference?
+%figure; plot(real(MF_output))
+MF_output_conv = conj(MF_output_conv(length(MF):end-length(MF)+1));
+rxVec = MF_output_conv(1:fsfd:end);  %get sample points
+
+%scatterplot(rx_vec); %scatterplot of received symbols
+
+%Symbols to bits
+eucDist = abs(repmat(rxVec.',1,4) - repmat(const, length(rxVec), 1)).^2;
+[tmp mHat] = min(eucDist, [], 2);
+%rxSymbols = const(mHat);
+
+%SER = symerr(m_idx, mHat') %count symbol errors
+rxBitsBuffer = de2bi(mHat'-1, 2, 'left-msb')'; %make symbols into bits
+rxBits = rxBitsBuffer(:)'; %write as a vector
+%BER = biterr(pack, rxBits) %count of bit errors
+
+
+%{
+fs = 8000;                                              % sampling frequency
 N = 432;                                                % number of bits
 const = [(1 + 1i) (1 - 1i) (-1 -1i) (-1 + 1i)]/sqrt(2); % Constellation 1 - QPSK/4-QAM
 M = length(const);                                      % Number of symbols in the constellation
@@ -75,6 +145,7 @@ span = 6;                                               % Set span = 6
 t_vec = -span*Ts: 1/fs :span*Ts;                        % create time vector for one sinc pulse
 pulse = sinc(t_vec/Ts);                                 % create sinc pulse with span = 6
 pulse_train = conv(pulse,x_upsample);                   % make pulse train
+%}
 
 
 %------------------------------------------------------------------------------
@@ -83,18 +154,18 @@ pulse_train = conv(pulse,x_upsample);                   % make pulse train
 %------------------------------------------------------------------------------
 
 % Step 1: save the estimated bits
-recObj.UserData.pack = bits;
+recObj.UserData.pack = rxBits;
 
 % Step 2: save the sampled symbols
-recObj.UserData.const = x;
+recObj.UserData.const = rxVec/max(abs(rxVec));
 
 % Step 3: provide the matched filter output for the eye diagram
-recObj.UserData.eyed.r = pulse_train;
+recObj.UserData.eyed.r = MF_output_conv;
 recObj.UserData.eyed.fsfd = fsfd;
 
 % Step 4: Compute the PSD and save it. 
 % !!!! NOTE !!!! the PSD should be computed on the BASE BAND signal BEFORE matched filtering
-[pxx, f] = pwelch(pulse_train,1024,768,1024, fs); % note that pwr_spect.f will be normalized frequencies
+[pxx, f] = pwelch(rx_baseband,1024,768,1024, fs); % note that pwr_spect.f will be normalized frequencies
 f = fftshift(f); %shift to be centered around fs
 f(1:length(f)/2) = f(1:length(f)/2) - fs; % center to be around zero
 p = fftshift(10*log10(pxx/max(pxx))); % shift, normalize and convert PSD to dB

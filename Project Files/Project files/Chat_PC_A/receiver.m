@@ -13,10 +13,10 @@
 %%
 
 function [audio_recorder] = receiver(fc)
-fc = 3000;
+%fc = 3000;
 fs = 8000; %sampling frequency
 audio_recorder = audiorecorder(fs,24,1);% create the recorder
-
+audio_recorder.UserData.counter = 1; %initialize a counter in the structure UserData
 %attach callback function
 time_value = 1; % how often the function should be called in seconds
 set(audio_recorder,'TimerPeriod',time_value,'TimerFcn',@audioTimerFcn); % attach a function that should be called every second, the function that is called is specified below.
@@ -57,6 +57,119 @@ function audioTimerFcn(recObj, event, handles)
 %-----------------------------------------------------------
 disp('Callback triggered')
 
+%Setup info
+fs = 8000; %sampling frequency
+fc = 1000;
+B = 200;                                        %1 sided bandwidth [hz]
+Tsamp = 1/fs;                                   %sample time
+alpha = 0.4;                                    %rolloff factor for rrc pulse
+G = (1+alpha)/(2*B);                            %Arbitrary paramater
+k = 1;                                          %integer multiple
+Ts = k*G;                                       %symbol time (for a root raised cosine)
+fsymb = 1/Ts;                                   %symbol rate [symb/s]
+const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);     %qpsk - 2 bits per symbol
+M = length(const);                              %number of symbols (2^2)
+bpsymb = log2(M);                               %bits per symbol
+Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
+fsfd = round(fs/fsymb)+1;                           %samples per symbol
+span = 6;
+
+%Implement root raised cosine pulse
+t_positive = eps:(1/fs):span*Ts;  % Replace 0 with eps (smallest +ve number MATLAB can produce) to prevent NANs
+t = [-fliplr(t_positive(2:end)) t_positive];
+tpi = pi/Ts; amtpi = tpi*(1-alpha); aptpi = tpi*(1 + alpha);
+ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
+pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
+pulse = pulse/norm(pulse);
+
+if recObj.UserData.counter < 3
+    recObj.UserData.counter = recObj.UserData.counter + 1;
+    % get current audio data
+    %rec_data = getaudiodata(recObj);
+    % plot the audio data
+    %figure(1); clf;plot(rec_data);
+else
+    stop(recObj);
+    disp('Stopped')
+    rec_data = getaudiodata(recObj);
+    %soundsc(rec_data,fs,24)
+    rxBaseband = rec_data'.*exp(-1i*2*pi*fc*(0:length(rec_data)-1)*Tsamp); %down modulate
+    
+    %Make baseband preamble sequence
+    preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
+    %preamble = [1 1 1 1 1 1 1 1];
+    mPreamble = buffer(preamble, bpsymb)';             %Group 2 bits per symbol (each row will be a symbol)
+    mPreIdx = bi2de(mPreamble, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Significant Bit
+    xPreamble = const(mPreIdx);                   % Look up symbols using the indices
+    xPreUpsample = upsample(xPreamble,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
+    sPreamble = conv(pulse,xPreUpsample);         %The baseband pulse shaped preamble sequency (ask about this in the Q&A)
+
+    corr = conv((rxBaseband), fliplr(sPreamble));   % correlate the sequence and rx_baseband
+    [tmp, Tmax] = max(real(corr));         %find location of max correlation (this should be where the preamble starts)
+    %fprintf('delay = %d \n',Tmax-length(sPreamble));
+    delay = Tmax - length(sPreamble); %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
+    if delay < 0
+        delay = 0;
+    end
+    
+    if tmp > 0.14
+        rxBaseband = rxBaseband(delay+1:end); %cut out the useless signal from rx_baseband (also ask if this is correct way)
+    end
+    
+    MF = fliplr(conj(pulse));        %create matched filter impulse response
+    %MF_output = filter(MF,1,rxBaseband);      % run received signal through matched filter
+    %figure; plot(real(MF_output))
+    %MF_output = MF_output(length(MF):end); %remove transient
+    MF_output_conv = conv(pulse, rxBaseband);  % Another approach to MF using conv, what's the difference?
+    %figure; plot(real(MF_output))
+    MF_output_conv = conj(MF_output_conv(length(MF):end-length(MF)+1));
+    rxVec = MF_output_conv(1:fsfd:end);  %get sample points
+    
+    rxVec = rxVec(1:227);
+    
+    %Symbol phase correction
+
+    %Find all rxVec points in 1+1i quadrant (upper right)
+    I1 = find(real(rxVec) > 0 & imag(rxVec) > 0);
+    %I2 = find(real(rxVec) < 0 & imag(rxVec) > 0);
+    %I3 = find(real(rxVec) < 0 & imag(rxVec) < 0);
+    %I4 = find(real(rxVec) > 0 & imag(rxVec) < 0);
+
+    phase1 = mean(angle(rxVec(I1)))*180/pi;
+    %phase2 = mean(angle(rxVec(I2)))*180/pi
+    %phase3 = mean(angle(rxVec(I3)))*180/pi
+    %phase4 = mean(angle(rxVec(I4)))*180/pi
+    deltaPhase1 = phase1-45;
+    rxVec = rxVec*exp(-1i*deltaPhase1*pi/180);
+    
+    scatterplot(rxVec/max(abs(rxVec))); %scatterplot of received symbols
+    
+    %length(rxVec)
+    
+    eucDist = abs(repmat(rxVec.',1,4) - repmat(const, length(rxVec), 1)).^2;
+    [tmp mHat] = min(eucDist, [], 2);
+    rxSymbols = const(mHat);
+    rxBitsBuffer = de2bi(mHat'-1, 2, 'left-msb')'; %make symbols into bits
+    rxBits = rxBitsBuffer(:)'; %write as a vector
+    
+    h = [0 1 1 0 1 0 0 0];
+    d = [0 1 1 0 0 1 0 0];
+    %sum(rxBits(23:30) == h)
+    sum(rxBits(31:62) == [h,d,h,d])
+    sum(rxBits(1:22) == preamble)
+    
+    %figure;
+    %subplot(2,1,1)
+    %plot(real(rxBaseband))
+    %title('Demod output')
+    %subplot(2,1,2)
+    %plot(real(MF_output_conv))
+    %title('MF output')
+    
+    figure; plot(real(corr), '.-r'); title('Correlation between rx_{baseband} and preamble pulse sequence')       % plot correlation
+end
+
+%{
 N = 432;
 pack = randsrc(1,N,[0 1]);
 fc = 3000;
@@ -175,5 +288,5 @@ recObj.UserData.pwr_spect.p = p;
 % In order to make the GUI look at the data, we need to set the
 % receive_complete flag equal to 1:
 recObj.UserData.receive_complete = 1; 
-    
+%}    
 end

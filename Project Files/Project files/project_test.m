@@ -76,7 +76,7 @@ tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to
 
 
 %From here on it is like receiver stuff
-SNR =5;   %signal to noise ratio
+SNR =20;   %signal to noise ratio
 rx_signal = awgn(tx_signal,SNR,'measured');          
 %rx_signal = tx_signal;
 rxBaseband = rx_signal.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); %down modulate
@@ -84,7 +84,7 @@ rxBaseband = [crap,rxBaseband]; %add the nonsense signal before the rx_baseband
 
 
 %Add phase error to the received signal
-phaseError = 40; %in degrees
+phaseError = 0; %in degrees
 theta = phaseError*(pi/180);
 rxBaseband = rxBaseband*exp(-1i*theta);
 

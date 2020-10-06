@@ -30,8 +30,10 @@ ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
 pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
 pulse = pulse/norm(pulse);
 
-
-pack = [preamble,pack'];            %prepend the preamble to the given pack of data
+%pack(401:end)
+%size(pack)
+%pack = [pack];             %prepend the preamble to the given pack of data
+pack = [preamble]
 m = buffer(pack, bpsymb)';             %Group 2 bits per symbol (each row will be a symbol)
 m_idx = bi2de(m, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Significant Bit
 x = const(m_idx);                   % Look up symbols using the indices

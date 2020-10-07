@@ -62,7 +62,7 @@ N = 432;                                                % number of bits
 const = [(1 + 1i) (1 - 1i) (-1 -1i) (-1 + 1i)]/sqrt(2); % Constellation 1 - QPSK/4-QAM
 M = length(const);                                      % Number of symbols in the constellation
 bpsymb = log2(M);                                       % Number of bits per symbol
-Rs = 500;                                                % Symbol rate [symb/s]
+Rs = 500;                                               % Symbol rate [symb/s]
 Ts = 1/Rs;                                              % Symbol time [s/symb]
 fsfd = fs/Rs;                                           % Number of samples per symbol (choose fs such that fsfd is an integer) [samples/symb]
 bits = randsrc(1,N,[0 1]);                              % Information bits
@@ -75,7 +75,6 @@ span = 6;                                               % Set span = 6
 t_vec = -span*Ts: 1/fs :span*Ts;                        % create time vector for one sinc pulse
 pulse = sinc(t_vec/Ts);                                 % create sinc pulse with span = 6
 pulse_train = conv(pulse,x_upsample);                   % make pulse train
-
 
 
 %------------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 %To test run: transmitter(randi(2,1,432)-1,1000)
 function transmitter(pack,fc)
 
-fs = 8000;                                     %sampling frequency
+fs = 44100;                                     %sampling frequency
 B = 200;                                        %1 sided bandwidth [hz]
 Tsamp = 1/fs;                                   %sample time
 alpha = 0.4;                                    %rolloff factor for rrc pulse
@@ -39,9 +39,9 @@ x_upsample = upsample(x,fsfd);      % Space the symbols fsfd apart, to enable pu
 s = conv(pulse,x_upsample);         %Baseband signal to transmit
 
 %Modulated tx signal
-tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upconversion 
-tx_signal = real(tx_signal);                        % send real part, information is in amplitude and phase
-tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to 1 to prevent clipping of waveforms
+%tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upconversion 
+%tx_signal = real(tx_signal);                        % send real part, information is in amplitude and phase
+%tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to 1 to prevent clipping of waveforms
 
 %Modulate the baseband signal
 tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upconversion 

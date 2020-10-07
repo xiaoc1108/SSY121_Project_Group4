@@ -14,11 +14,9 @@
 
 function [audio_recorder] = receiver(fc)
 %fc = 3000;
-fs = 44100; %sampling frequency
+fs = 8000; %sampling frequency
 audio_recorder = audiorecorder(fs,24,1);% create the recorder
 audio_recorder.UserData.counter = 1; %initialize a counter in the structure UserData
-audio_recorder.UserData.fc = fc;
-audio_recorder.UserData.fs = fs;
 %attach callback function
 time_value = 1; % how often the function should be called in seconds
 set(audio_recorder,'TimerPeriod',time_value,'TimerFcn',@audioTimerFcn); % attach a function that should be called every second, the function that is called is specified below.
@@ -60,10 +58,8 @@ function audioTimerFcn(recObj, event, handles)
 disp('Callback triggered')
 
 %Setup info
-%fs = 44100; %sampling frequency
-%fc = 1000;
-fc = recObj.UserData.fc;
-fs = recObj.UserData.fs;
+fs = 8000; %sampling frequency
+fc = 1000;
 B = 200;                                        %1 sided bandwidth [hz]
 Tsamp = 1/fs;                                   %sample time
 alpha = 0.4;                                    %rolloff factor for rrc pulse
@@ -109,15 +105,15 @@ else
     sPreamble = conv(pulse,xPreUpsample);         %The baseband pulse shaped preamble sequency (ask about this in the Q&A)
 
     corr = conv((rxBaseband), fliplr(sPreamble));   % correlate the sequence and rx_baseband
-    [tmp, Tmax] = max(abs(real(corr)));         %find location of max correlation (this should be where the preamble starts)
+    [tmp, Tmax] = max(real(corr));         %find location of max correlation (this should be where the preamble starts)
     %fprintf('delay = %d \n',Tmax-length(sPreamble));
-    delay = Tmax - length(sPreamble) %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
+    delay = Tmax - length(sPreamble); %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
     if delay < 0
         delay = 0;
     end
     
     if tmp > 0.14
-        rxBaseband = rxBaseband(delay+2:end); %cut out the useless signal from rx_baseband (also ask if this is correct way)
+        rxBaseband = rxBaseband(delay+1:end); %cut out the useless signal from rx_baseband (also ask if this is correct way)
     end
     
     MF = fliplr(conj(pulse));        %create matched filter impulse response
@@ -161,7 +157,6 @@ else
     %sum(rxBits(23:30) == h)
     %sum(rxBits(31:62) == [h,d,h,d])
     sum(rxBits(1:22) == preamble)
-    rxBits(383:400)
     
     figure;
     subplot(2,1,1)

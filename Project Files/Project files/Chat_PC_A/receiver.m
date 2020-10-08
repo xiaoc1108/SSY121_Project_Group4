@@ -97,7 +97,8 @@ else
     disp('Stopped')
     rec_data = getaudiodata(recObj);
     %soundsc(rec_data,fs,24)
-    rxBaseband = rec_data'.*exp(-1i*2*pi*fc*(0:length(rec_data)-1)*Tsamp); %down modulate
+    rxBaseband = rec_data'.*exp(-1i*2*pi*fc*(0:length(rec_data')-1)*Tsamp); %down modulate
+    rx = rxBaseband;
     
     %Make baseband preamble sequence
     preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
@@ -112,7 +113,7 @@ else
     corr = corr/max(abs(corr));
     [tmp, Tmax] = max(abs(real(corr)));         %find location of max correlation (this should be where the preamble starts)
     %fprintf('delay = %d \n',Tmax-length(sPreamble));
-    delay = Tmax - length(sPreamble) %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
+    delay = Tmax - length(sPreamble); %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
     if delay < 0
         delay = 0;
     end
@@ -144,7 +145,9 @@ else
     %phase2 = mean(angle(rxVec(I2)))*180/pi
     %phase3 = mean(angle(rxVec(I3)))*180/pi
     %phase4 = mean(angle(rxVec(I4)))*180/pi
-    deltaPhase1 = phase1-45;
+    %phase1
+    deltaPhase1 = phase1-45;                                                %lets see if this is casuing issues
+    deltaPhase1
     rxVec = rxVec*exp(-1i*deltaPhase1*pi/180);
     
     scatterplot(rxVec/max(abs(rxVec))); %scatterplot of received symbols
@@ -165,12 +168,15 @@ else
     rxBits(383:400)
     
     figure;
-    subplot(2,1,1)
+    subplot(3,1,1)
+    plot(real(rx))
+    title('Rx Baseband with no frame sync')
+    subplot(3,1,2)
     plot(real(rxBaseband))
-    title('Demod output')
-    subplot(2,1,2)
+    title('Rx baseband after framce sync')
+    subplot(3,1,3)
     plot(real(MF_output_conv))
-    title('MF output')
+    title('MF output after frame sync')
     
     %eyediagram(MF_output_conv, fsfd, 1/round(fsymb)); % plot the eyediagram from the output of matched filter using MATLAB's function
     

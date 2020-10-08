@@ -14,7 +14,7 @@
 
 function [audio_recorder] = receiver(fc)
 %fc = 3000;
-fs = 44100; %sampling frequency
+fs = 22050; %sampling frequency
 audio_recorder = audiorecorder(fs,24,1);% create the recorder
 audio_recorder.UserData.counter = 1; %initialize a counter in the structure UserData
 audio_recorder.UserData.fc = fc;
@@ -86,7 +86,7 @@ ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
 pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
 pulse = pulse/norm(pulse);
 
-if recObj.UserData.counter < 3
+if recObj.UserData.counter < 5
     recObj.UserData.counter = recObj.UserData.counter + 1;
     % get current audio data
     %rec_data = getaudiodata(recObj);
@@ -109,6 +109,7 @@ else
     sPreamble = conv(pulse,xPreUpsample);         %The baseband pulse shaped preamble sequency (ask about this in the Q&A)
 
     corr = conv((rxBaseband), fliplr(sPreamble));   % correlate the sequence and rx_baseband
+    corr = corr/max(abs(corr));
     [tmp, Tmax] = max(abs(real(corr)));         %find location of max correlation (this should be where the preamble starts)
     %fprintf('delay = %d \n',Tmax-length(sPreamble));
     delay = Tmax - length(sPreamble) %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
@@ -116,7 +117,7 @@ else
         delay = 0;
     end
     
-    if tmp > 0.14
+    if tmp > 0.8
         rxBaseband = rxBaseband(delay+2:end); %cut out the useless signal from rx_baseband (also ask if this is correct way)
     end
     
@@ -170,6 +171,8 @@ else
     subplot(2,1,2)
     plot(real(MF_output_conv))
     title('MF output')
+    
+    %eyediagram(MF_output_conv, fsfd, 1/round(fsymb)); % plot the eyediagram from the output of matched filter using MATLAB's function
     
     figure; plot(real(corr), '.-r'); title('Correlation between rx_{baseband} and preamble pulse sequence')       % plot correlation
 end

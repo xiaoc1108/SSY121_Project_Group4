@@ -6,7 +6,7 @@
 %To test run: transmitter(randi(2,1,432)-1,1000)
 function transmitter(pack,fc)
 
-fs = 44100;                                     %sampling frequency
+fs = 22050;                                     %sampling frequency
 B = 200;                                        %1 sided bandwidth [hz]
 Tsamp = 1/fs;                                   %sample time
 alpha = 0.4;                                    %rolloff factor for rrc pulse

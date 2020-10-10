@@ -24,7 +24,7 @@ preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used
 
 Rb = 480;
 Rs = Rb/bpsymb;
-fsfd = fs/Rs
+fsfd = fs/Rs;
 Ts = 1/Rs;
 
 %Root raised cosine pulse

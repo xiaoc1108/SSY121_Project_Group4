@@ -19,8 +19,11 @@ audio_recorder = audiorecorder(fs,16,1,1);% create the recorder
 audio_recorder.UserData.counter = 1; %initialize a counter in the structure UserData
 audio_recorder.UserData.fc = fc;
 audio_recorder.UserData.fs = fs;
+audio_recorder.UserData.trigger = 0;
+audio_recorder.UserData.maxCorr = [];
+audio_recorder.UserData.corrIdx = [];
 %attach callback function
-time_value = 0.5; % how often the function should be called in seconds
+time_value = 0.2; % how often the function should be called in seconds
 set(audio_recorder,'TimerPeriod',time_value,'TimerFcn',@audioTimerFcn); % attach a function that should be called every second, the function that is called is specified below.
 
 %ADD USER DATA FOR CALLBACK FUNCTION (DO NOT CHANGE THE NAMES OF THESE VARIABLES!)
@@ -57,41 +60,191 @@ function audioTimerFcn(recObj, event, handles)
 %-----------------------------------------------------------
 % THE CODE BELOW IS BASED ON COMPUTER EX 5 AND EX 6:
 %-----------------------------------------------------------
-disp('Callback triggered')
 
-% %Setup info
-% %fs = 44100; %sampling frequency
-% %fc = 1000;
-% fc = recObj.UserData.fc;
-% fs = recObj.UserData.fs;
-% B = 200;                                        %1 sided bandwidth [hz]
-% Tsamp = 1/fs;                                   %sample time
-% alpha = 0.4;                                    %rolloff factor for rrc pulse
-% G = (1+alpha)/(2*B);                            %Arbitrary paramater
-% k = 1;                                          %integer multiple
-% Ts = k*G;                                       %symbol time (for a root raised cosine)
-% fsymb = 1/Ts;                                   %symbol rate [symb/s]
-% const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);     %qpsk - 2 bits per symbol
-% M = length(const);                              %number of symbols (2^2)
-% bpsymb = log2(M);                               %bits per symbol
-% Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
-% fsfd = round(fs/fsymb)+1;                           %samples per symbol
-% span = 6;
-% 
-% %Implement root raised cosine pulse
-% t_positive = eps:(1/fs):span*Ts;  % Replace 0 with eps (smallest +ve number MATLAB can produce) to prevent NANs
-% t = [-fliplr(t_positive(2:end)) t_positive];
-% tpi = pi/Ts; amtpi = tpi*(1-alpha); aptpi = tpi*(1 + alpha);
-% ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
-% pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
-% pulse = pulse/norm(pulse);
+if recObj.UserData.trigger == 0
+    %disp('Callback triggered')
+    rec_data = 0;
+    rxBaseband = 0;
+    rec_data = getaudiodata(recObj);
 
+    %Setup info
+    %fs = 44100; %sampling frequency
+    %fc = 1000;
+    fc = recObj.UserData.fc;
+    fs = recObj.UserData.fs;
+    B = 200;                                        %1 sided bandwidth [hz]
+    Tsamp = 1/fs;                                   %sample time
+    alpha = 0.4;                                    %rolloff factor for rrc pulse
+    G = (1+alpha)/(2*B);                            %Arbitrary paramater
+    k = 1;                                          %integer multiple
+    Ts = k*G;                                       %symbol time (for a root raised cosine)
+    fsymb = 1/Ts;                                   %symbol rate [symb/s]
+    const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);     %qpsk - 2 bits per symbol
+    M = length(const);                              %number of symbols (2^2)
+    bpsymb = log2(M);                               %bits per symbol
+    Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
+    fsfd = round(fs/fsymb)+1;                           %samples per symbol
+    span = 6;
+
+    Rb = 480;               %bit rate
+    Rs = Rb/bpsymb;         %ssymbol rate
+    fsfd = fs/Rs;           %samples/symbol
+    Ts = 1/Rs;              %Symbol time
+
+    %Root raised cosine pulse
+    [pulse, t] = rtrcpuls(alpha,Ts,fs,span);
+
+    %Down modulate the received signal
+    rxBaseband = rec_data'.*exp(-1i*2*pi*fc*(0:length(rec_data')-1)*Tsamp); %down modulate
+
+    %Make baseband preamble sequence
+    preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
+    mPreamble = buffer(preamble, bpsymb)';             %Group 2 bits per symbol (each row will be a symbol)
+    mPreIdx = bi2de(mPreamble, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Significant Bit
+    xPreamble = const(mPreIdx);                   % Look up symbols using the indices
+    xPreUpsample = upsample(xPreamble,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
+    sPreamble = conv(pulse,xPreUpsample);         %The baseband pulse shaped preamble sequency (ask about this in the Q&A)
+
+    %Correlate the signal and preamble
+    corr = conv((rxBaseband), fliplr(sPreamble));
+    %figure(1); clf; plot(real(corr))
+
+    [tmp, Tmax] = max(abs(real(corr)));
+
+    if tmp > 1.5
+        recObj.Userdata.trigger = 1;
+        recObj.UserData.maxCorr = tmp;
+        recObj.UserData.corrIdx = Tmax;
+        disp('Triggered')
+    end
+elseif recObj.userData.trigger == 1 && recObj.UserData.counter < 5
+    recObj.UserData.counter = recObj.UserData.counter + 1;
+    
+elseif recObj.UserData.trigger == 1 && recObj.UserData.counter == 5
+    stop(recObj);
+    disp('Stopped');
+    rec_data = getaudiodata(recObj);
+    
+    %Setup info
+    %fs = 44100; %sampling frequency
+    %fc = 1000;
+    fc = recObj.UserData.fc;
+    fs = recObj.UserData.fs;
+    Tsamp = 1/fs;                                   %sample time
+    alpha = 0.4;                                    %rolloff factor for rrc pulse
+    const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);     %qpsk - 2 bits per symbol
+    M = length(const);                              %number of symbols (2^2)
+    bpsymb = log2(M);                               %bits per symbol
+    span = 6;
+
+    Rb = 480;               %bit rate
+    Rs = Rb/bpsymb;         %ssymbol rate
+    fsfd = fs/Rs;           %samples/symbol
+    Ts = 1/Rs;              %Symbol time
+    
+    %Root raised cosine pulse
+    [pulse, t] = rtrcpuls(alpha,Ts,fs,span);
+    
+    %Down modulate
+    rxBaseband = rec_data'.*exp(-1i*2*pi*fc*(0:length(rec_data')-1)*Tsamp); %down modulate
+    rx = rxBaseband;
+    
+    %Make baseband preamble sequence
+    preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
+    mPreamble = buffer(preamble, bpsymb)';             %Group 2 bits per symbol (each row will be a symbol)
+    mPreIdx = bi2de(mPreamble, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Significant Bit
+    xPreamble = const(mPreIdx);                   % Look up symbols using the indices
+    xPreUpsample = upsample(xPreamble,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
+    sPreamble = conv(pulse,xPreUpsample);         %The baseband pulse shaped preamble sequency (ask about this in the Q&A)
+
+    %Correlate the signal and preamble
+    corr = conv((rxBaseband), fliplr(sPreamble));
+    
+    %trying to invert the signal
+    if abs(min(real(corr))) > abs(max(real(corr)))
+        rxBaseband = rxBaseband*exp(1i*pi); %rotate by 180 degrees;
+        disp('Yes')
+    end
+    %Clip rxBaseband to the correct length
+    %[tmp, Tmax] = max(abs(real(corr)));         %find location of max correlation (this should be where the preamble starts)
+    delay = recObj.UserData.corrIdx - length(sPreamble);
+    %if delay < 0
+    %    delay = 0;
+    %end
+    rxBaseband = rxBaseband(delay+2:(47798)+delay+2);
+    
+    MF_output_conv = matchFilter(pulse,rxBaseband);
+    rxVec = MF_output_conv(1:fsfd:end); 
+    rxVec = rxVec(1:227);
+    
+     %Symbol phase correction
+    %Find all rxVec points in 1+1i quadrant (upper right)
+    I1Preamb = find(real(xPreamble) > 0 & imag(xPreamble) > 0);
+    I2Preamb = find(real(xPreamble) < 0 & imag(xPreamble) > 0);
+    I3Preamb = find(real(xPreamble) < 0 & imag(xPreamble) < 0);
+    I4Preamb = find(real(xPreamble) > 0 & imag(xPreamble) < 0);
+
+    phase1 = mean(angle(rxVec(I1Preamb)))*180/pi;
+    phase2 = mean(angle(rxVec(I2Preamb)))*180/pi;
+    phase3 = mean(angle(rxVec(I3Preamb)))*180/pi;
+    phase4 = mean(angle(rxVec(I4Preamb)))*180/pi;
+    deltaPhase1 = phase1-45;
+    deltaPhase2 = phase2-135;
+    deltaPhase3 = phase3+135;
+    deltaPhase4 = phase4+45;
+    deltaPhase = (deltaPhase1+deltaPhase2+deltaPhase3+deltaPhase4)/4;
+    rxVec = rxVec*exp(-1i*deltaPhase*pi/180);
+    
+    eucDist = abs(repmat(rxVec.',1,4) - repmat(const, length(rxVec), 1)).^2;
+    [tmp,mHat] = min(eucDist, [], 2);
+    %rxSymbols = const(mHat);
+    rxBitsBuffer = de2bi(mHat'-1, 2, 'left-msb')'; %make symbols into bits
+    rxBits = rxBitsBuffer(:)'; %write as a vector
+   
+    %sum(rxBits(1:22) == preamble)
+    
+    % Step 1: save the estimated bits
+    recObj.UserData.pack = rxBits(23:end);
+
+    % Step 2: save the sampled symbols
+    recObj.UserData.const = rxVec(12:end)/max(abs(rxVec(12:end)));
+
+    % Step 3: provide the matched filter output for the eye diagram
+    recObj.UserData.eyed.r = MF_output_conv;
+    recObj.UserData.eyed.fsfd = fsfd;
+
+    % Step 4: Compute the PSD and save it. 
+    % !!!! NOTE !!!! the PSD should be computed on the BASE BAND signal BEFORE matched filtering
+    [pxx, f] = pwelch(rxBaseband,1024,768,1024, fs); % note that pwr_spect.f will be normalized frequencies
+    f = fftshift(f); %shift to be centered around fs
+    f(1:length(f)/2) = f(1:length(f)/2) - fs; % center to be around zero
+    p = fftshift(10*log10(pxx/max(pxx))); % shift, normalize and convert PSD to dB
+    recObj.UserData.pwr_spect.f = f;
+    recObj.UserData.pwr_spect.p = p;
+
+    % In order to make the GUI look at the data, we need to set the
+    % receive_complete flag equal to 1:
+    recObj.UserData.receive_complete = 1;    
+
+%     figure;
+%     subplot(3,1,1)
+%     plot(real(rx))
+%     title('Rx Baseband with no frame sync')
+%     subplot(3,1,2)
+%     plot(real(rxBaseband))
+%     title('Rx baseband after framce sync')
+%     subplot(3,1,3)
+%     plot(real(MF_output_conv))
+%     title('MF output after frame sync')
+%     
+%     figure;
+%     eyediagram(MF_output_conv, fsfd, 1/Rs);
+end
+
+%{
 if recObj.UserData.counter < 10
     recObj.UserData.counter = recObj.UserData.counter + 1;
-    % get current audio data
-    %rec_data = getaudiodata(recObj);
-    % plot the audio data
-    %figure(1); clf;plot(rec_data);
+
 else
     stop(recObj);
     disp('Stopped')
@@ -142,11 +295,7 @@ else
     %rxBaseband = matchFilter(pulse,rxBaseband);
 
     corr = conv((rxBaseband), fliplr(sPreamble));   % correlate the sequence and rx_baseband
-    %figure;
-    %plot(real(xcorr(rxBaseband,(sPreamble))))
-    %corr = corr/max(abs(corr));
-    %corr = normalize(corr);
-    corr = corr/max(abs((corr)));
+    plot(abs(corr))
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %trying to invert the signal
@@ -163,18 +312,9 @@ else
     if delay < 0
         delay = 0;
     end
-    if tmp > 0.7
+    if tmp > 4
         rxBaseband = rxBaseband(delay+3:47798+delay+3); %cut out the useless signal from rx_baseband (also ask if this is correct way)
     
-    
-%     MF = fliplr(conj(pulse));        %create matched filter impulse response
-%     %MF_output = filter(MF,1,rxBaseband);      % run received signal through matched filter
-%     %figure; plot(real(MF_output))
-%     %MF_output = MF_output(length(MF):end); %remove transient
-%     MF_output_conv = conv(pulse, rxBaseband);  % Another approach to MF using conv, what's the difference?
-%     %figure; plot(real(MF_output))
-%     MF_output_conv = conj(MF_output_conv(length(MF):end-length(MF)+1));
-%     rxVec = MF_output_conv(1:fsfd:end);  %get sample points
     MF_output_conv = matchFilter(pulse,rxBaseband);
     rxVec = MF_output_conv(1:fsfd:end); 
     rxVec = rxVec(1:227);
@@ -196,19 +336,6 @@ else
     deltaPhase4 = phase4+45;
     deltaPhase = (deltaPhase1+deltaPhase2+deltaPhase3+deltaPhase4)/4;
     rxVec = rxVec*exp(-1i*deltaPhase*pi/180);
-%     %Find all rxVec points in 1+1i quadrant (upper right)
-%     I1 = find(real(rxVec) > 0 & imag(rxVec) > 0);
-%     %I2 = find(real(rxVec) < 0 & imag(rxVec) > 0);
-%     %I3 = find(real(rxVec) < 0 & imag(rxVec) < 0);
-%     %I4 = find(real(rxVec) > 0 & imag(rxVec) < 0);
-% 
-%     phase1 = mean(angle(rxVec(I1)))*180/pi;
-%     %phase2 = mean(angle(rxVec(I2)))*180/pi
-%     %phase3 = mean(angle(rxVec(I3)))*180/pi
-%     %phase4 = mean(angle(rxVec(I4)))*180/pi
-%     %phase1
-%     deltaPhase1 = phase1-45;                                                %lets see if this is casuing issues
-%     rxVec = rxVec*exp(-1i*deltaPhase1*pi/180);
     
     scatterplot(rxVec/max(abs(rxVec))); %scatterplot of received symbols
     
@@ -280,127 +407,7 @@ else
     recObj.UserData.receive_complete = 1;
     end
 end
-
-%{
-N = 432;
-pack = randsrc(1,N,[0 1]);
-fc = 3000;
-
-fs = 8000;                                     %sampling frequency
-B = 200;                                        %1 sided bandwidth [hz]
-Tsamp = 1/fs;                                   %sample time
-alpha = 0.4;                                    %rolloff factor for rrc pulse
-G = (1+alpha)/(2*B);                            %Arbitrary paramater
-k = 1;                                          %integer multiple
-Ts = k*G;                                       %symbol time (for a root raised cosine)
-fsymb = 1/Ts;                                   %symbol rate [symb/s]
-const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);     %qpsk - 2 bits per symbol
-M = length(const);                              %number of symbols (2^2)
-bpsymb = log2(M);                               %bits per symbol
-Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
-fsfd = round(fs/fsymb)+1;                           %samples per symbol
-span = 6;
-
-%Implement root raised cosine pulse
-t_positive = eps:(1/fs):span*Ts;  % Replace 0 with eps (smallest +ve number MATLAB can produce) to prevent NANs
-t = [-fliplr(t_positive(2:end)) t_positive];
-tpi = pi/Ts; amtpi = tpi*(1-alpha); aptpi = tpi*(1 + alpha);
-ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
-pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
-pulse = pulse/norm(pulse);
-
-%[pulse, t] = rtrcpuls(alpha,Ts,fs,span);
-
-%pack(401:end)
-m = buffer(pack, bpsymb)';             %Group 2 bits per symbol (each row will be a symbol)
-m_idx = bi2de(m, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Significant Bit
-x = const(m_idx);                   % Look up symbols using the indices
-x_upsample = upsample(x,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
-s = conv(pulse,x_upsample);         %Baseband signal to transmit
-
-%Modulated tx signal
-tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upconversion 
-tx_signal = real(tx_signal);                        % send real part, information is in amplitude and phase
-tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to 1 to prevent clipping of waveforms
-
-%From here on it is like receiver stuff
-SNR = 10;   %signal to noise ratio
-rx_signal = awgn(tx_signal,SNR,'measured');          
-%rx_signal = tx_signal;
-rx_baseband = rx_signal.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); %down modulate
-%rx_baseband = s;
-MF = fliplr(conj(pulse));        %create matched filter impulse response
-MF_output = filter(MF,1,rx_baseband);      % run received signal through matched filter
-%figure; plot(real(MF_output))
-MF_output = MF_output(length(MF):end); %remove transient
-MF_output_conv = conv(pulse, rx_baseband);  % Another approach to MF using conv, what's the difference?
-%figure; plot(real(MF_output))
-MF_output_conv = conj(MF_output_conv(length(MF):end-length(MF)+1));
-rxVec = MF_output_conv(1:fsfd:end);  %get sample points
-
-%scatterplot(rx_vec); %scatterplot of received symbols
-
-%Symbols to bits
-eucDist = abs(repmat(rxVec.',1,4) - repmat(const, length(rxVec), 1)).^2;
-[tmp mHat] = min(eucDist, [], 2);
-%rxSymbols = const(mHat);
-
-%SER = symerr(m_idx, mHat') %count symbol errors
-rxBitsBuffer = de2bi(mHat'-1, 2, 'left-msb')'; %make symbols into bits
-rxBits = rxBitsBuffer(:)'; %write as a vector
-%BER = biterr(pack, rxBits) %count of bit errors
-
-
-%{
-fs = 8000;                                              % sampling frequency
-N = 432;                                                % number of bits
-const = [(1 + 1i) (1 - 1i) (-1 -1i) (-1 + 1i)]/sqrt(2); % Constellation 1 - QPSK/4-QAM
-M = length(const);                                      % Number of symbols in the constellation
-bpsymb = log2(M);                                       % Number of bits per symbol
-Rs = 500;                                               % Symbol rate [symb/s]
-Ts = 1/Rs;                                              % Symbol time [s/symb]
-fsfd = fs/Rs;                                           % Number of samples per symbol (choose fs such that fsfd is an integer) [samples/symb]
-bits = randsrc(1,N,[0 1]);                              % Information bits
-m_buffer = buffer(bits, bpsymb)';                       % Group bits into bits per symbol
-m = bi2de(m_buffer, 'left-msb')'+1;                     % Bits to symbol index
-x = const(m);                                           % Look up symbols using the indices
-x = awgn(x,15);                                          % add artificial noise
-x_upsample = upsample(x, fsfd);                         % Space the symbols fsfd apart, to enable pulse shaping using conv.
-span = 6;                                               % Set span = 6
-t_vec = -span*Ts: 1/fs :span*Ts;                        % create time vector for one sinc pulse
-pulse = sinc(t_vec/Ts);                                 % create sinc pulse with span = 6
-pulse_train = conv(pulse,x_upsample);                   % make pulse train
 %}
-
-
-%------------------------------------------------------------------------------
-% HOW TO SAVE DATA FOR THE GUI
-%   NOTE THAT THE EXAMPLE HERE IS ONLY USED TO SHOW HOW TO OUTPUT DATA
-%------------------------------------------------------------------------------
-
-% Step 1: save the estimated bits
-recObj.UserData.pack = rxBits;
-
-% Step 2: save the sampled symbols
-recObj.UserData.const = rxVec/max(abs(rxVec));
-
-% Step 3: provide the matched filter output for the eye diagram
-recObj.UserData.eyed.r = MF_output_conv;
-recObj.UserData.eyed.fsfd = fsfd;
-
-% Step 4: Compute the PSD and save it. 
-% !!!! NOTE !!!! the PSD should be computed on the BASE BAND signal BEFORE matched filtering
-[pxx, f] = pwelch(rx_baseband,1024,768,1024, fs); % note that pwr_spect.f will be normalized frequencies
-f = fftshift(f); %shift to be centered around fs
-f(1:length(f)/2) = f(1:length(f)/2) - fs; % center to be around zero
-p = fftshift(10*log10(pxx/max(pxx))); % shift, normalize and convert PSD to dB
-recObj.UserData.pwr_spect.f = f;
-recObj.UserData.pwr_spect.p = p;
-
-% In order to make the GUI look at the data, we need to set the
-% receive_complete flag equal to 1:
-recObj.UserData.receive_complete = 1; 
-%}    
 end
 
 function MF_output_conv = matchFilter(pulse, signal)

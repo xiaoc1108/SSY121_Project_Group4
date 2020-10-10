@@ -12,9 +12,9 @@ preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];
 data = randsrc(1,N,[0 1]);
 pack = [preamble,data];
 %crap = awgn(randsrc(1,1234,[-1 1]),-5,'measured'); %this is the useless signal we can put before the pack at the receiver end
-fc = 1000;
+fc = 2500;
 
-fs = 22050;                                     %sampling frequency
+fs = 48000;                                     %sampling frequency
 B = 200;                                        %1 sided bandwidth [hz]
 Tsamp = 1/fs;                                   %sample time
 alpha = 0.4;                                    %rolloff factor for rrc pulse
@@ -29,9 +29,14 @@ Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
 fsfd = round(fs/fsymb)+1;                           %samples per symbol
 span = 6;
 
+Rb = 480;
+Rs = Rb/bpsymb;
+fsfd = fs/Rs;
+Ts = 1/Rs;
+
 %This will be the noisy stuff before the preamble so we can see if our
 %system detects the preamble
-crapIdx = randi(4,55,1)';
+crapIdx = randi(4,1050,1)';
 crap = awgn(const(crapIdx),-5,'measured');
 
 %Implement root raised cosine pulse
@@ -76,7 +81,7 @@ tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to
 
 
 %From here on it is like receiver stuff
-SNR =5;   %signal to noise ratio
+SNR =0;   %signal to noise ratio
 rx_signal = awgn(tx_signal,SNR,'measured');          
 %rx_signal = tx_signal;
 rxBaseband = rx_signal.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); %down modulate
@@ -84,7 +89,7 @@ rxBaseband = [crap,rxBaseband]; %add the nonsense signal before the rx_baseband
 
 
 %Add phase error to the received signal
-phaseError = 0; %in degrees
+phaseError = 33; %in degrees
 theta = phaseError*(pi/180);
 rxBaseband = rxBaseband*exp(-1i*theta);
 
@@ -97,15 +102,15 @@ xPreUpsample = upsample(xPreamble,fsfd);      % Space the symbols fsfd apart, to
 sPreamble = conv(pulse,xPreUpsample);         %The baseband pulse shaped preamble sequency (ask about this in the Q&A)
 
 corr = conv((rxBaseband), fliplr(sPreamble));   % correlate the sequence and rx_baseband
-corr = corr/max(abs(corr));
-[tmp, Tmax] = max(real(corr));         %find location of max correlation (this should be where the preamble starts)
+corr = normalize(corr);
+[tmp, Tmax] = max(abs(corr));         %find location of max correlation (this should be where the preamble starts)
 %fprintf('delay = %d \n',Tmax-length(sPreamble));
 delay = Tmax - length(sPreamble) %this point will be where the preamble starts, so for rx_baseband we will take from this point onwards?
 if delay < 0
     delay = 0;
 end
 
-rxBaseband = rxBaseband(delay+2:end); %cut out the useless signal from rx_baseband (also ask if this is correct way)
+rxBaseband = rxBaseband(delay+3:end); %cut out the useless signal from rx_baseband (also ask if this is correct way)
 
 %phasePreamble = angle(sPreamble);
 %phaseRxPreamble = angle(rxBaseband(1:length(sPreamble)));
@@ -125,17 +130,21 @@ rxVec = MF_output_conv(1:fsfd:end);  %get sample points
 %Symbol phase correction
 
 %Find all rxVec points in 1+1i quadrant (upper right)
-I1 = find(real(rxVec) > 0 & imag(rxVec) > 0);
-%I2 = find(real(rxVec) < 0 & imag(rxVec) > 0);
-%I3 = find(real(rxVec) < 0 & imag(rxVec) < 0);
-%I4 = find(real(rxVec) > 0 & imag(rxVec) < 0);
+I1Preamb = find(real(xPreamble) > 0 & imag(xPreamble) > 0);
+I2Preamb = find(real(xPreamble) < 0 & imag(xPreamble) > 0);
+I3Preamb = find(real(xPreamble) < 0 & imag(xPreamble) < 0);
+I4Preamb = find(real(xPreamble) > 0 & imag(xPreamble) < 0);
 
-phase1 = mean(angle(rxVec(I1)))*180/pi;
-%phase2 = mean(angle(rxVec(I2)))*180/pi
-%phase3 = mean(angle(rxVec(I3)))*180/pi
-%phase4 = mean(angle(rxVec(I4)))*180/pi
+phase1 = mean(angle(rxVec(I1Preamb)))*180/pi;
+phase2 = mean(angle(rxVec(I2Preamb)))*180/pi;
+phase3 = mean(angle(rxVec(I3Preamb)))*180/pi;
+phase4 = mean(angle(rxVec(I4Preamb)))*180/pi;
 deltaPhase1 = phase1-45;
-rxVec = rxVec*exp(-1i*deltaPhase1*pi/180);
+deltaPhase2 = phase2-135;
+deltaPhase3 = phase3+135;
+deltaPhase4 = phase4+45;
+deltaPhase = (deltaPhase1+deltaPhase2+deltaPhase3+deltaPhase4)/4;
+rxVec = rxVec*exp(-1i*deltaPhase*pi/180);
 
 %{
 figure
@@ -180,7 +189,7 @@ BER = biterr(pack, rxBits) %count of bit errors
 
 %Plots
 
-figure; plot(real(corr), '.-r'); title('Correlation between rx_{baseband} and preamble pulse sequence')       % plot correlation
+figure; plot(abs(corr), '.-r'); title('Correlation between rx_{baseband} and preamble pulse sequence')       % plot correlation
 
 scatterplot(rxVec/max(abs(rxVec))); %scatterplot of received symbols
 %{

@@ -6,7 +6,7 @@
 %To test run: transmitter(randi(2,1,432)-1,1000)
 function transmitter(pack,fc)
 
-fs = 22050;                                     %sampling frequency
+fs = 48000;                                     %sampling frequency
 B = 200;                                        %1 sided bandwidth [hz]
 Tsamp = 1/fs;                                   %sample time
 alpha = 0.4;                                    %rolloff factor for rrc pulse
@@ -22,13 +22,13 @@ fsfd = round(fs/fsymb)+1;                           %samples per symbol
 span = 6;
 preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
 
-%Implement root raised cosine pulse
-t_positive = eps:(1/fs):span*Ts;  % Replace 0 with eps (smallest +ve number MATLAB can produce) to prevent NANs
-t = [-fliplr(t_positive(2:end)) t_positive];
-tpi = pi/Ts; amtpi = tpi*(1-alpha); aptpi = tpi*(1 + alpha);
-ac = 4*alpha/Ts; at = 16*alpha^2/Ts^2;
-pulse = (sin(amtpi*t) + (ac*t).*cos(aptpi*t))./(tpi*t.*(1-at*t.^2));
-pulse = pulse/norm(pulse);
+Rb = 480;
+Rs = Rb/bpsymb;
+fsfd = fs/Rs
+Ts = 1/Rs;
+
+%Root raised cosine pulse
+[pulse, t] = rtrcpuls(alpha,Ts,fs,span);
 
 
 pack = [preamble,pack'];            %prepend the preamble to the given pack of data
@@ -48,5 +48,5 @@ tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upco
 tx_signal = real(tx_signal);                        % send real part, information is in amplitude and phase
 tx_signal = tx_signal/max(abs(tx_signal));          % Limit the max amplitude to 1 to prevent clipping of waveforms
 
-player = audioplayer(tx_signal, fs);       %create an audioplayer object to play the noise at a given sampling frequency
+player = audioplayer(tx_signal, fs,16,4);       %create an audioplayer object to play the noise at a given sampling frequency
 playblocking(player); % Play the noise 

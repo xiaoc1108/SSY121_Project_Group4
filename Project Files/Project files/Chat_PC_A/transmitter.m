@@ -41,7 +41,7 @@ m_idx = bi2de(m, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Signif
 x = const(m_idx);                   % Look up symbols using the indices
 x_upsample = upsample(x,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
 s = conv(pulse,x_upsample);         %Baseband signal to transmit
-length(s);
+length(s)
 
 %figure;
 %plot(real(s))

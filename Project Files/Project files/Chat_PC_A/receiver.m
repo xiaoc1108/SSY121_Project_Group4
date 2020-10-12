@@ -14,11 +14,11 @@
 
 function [audio_recorder] = receiver(fc)
 %fc = 3000;
-fs = 48000; %sampling frequency
+fs = 48000/2; %sampling frequency
 audio_recorder = audiorecorder(fs,16,1,1);% create the recorder
 audio_recorder.UserData.counter = 1; %initialize a counter in the structure UserData
 audio_recorder.UserData.fc = fc;        %carrier freq
-audio_recorder.UserData.fs = 48000;        %sample freq
+audio_recorder.UserData.fs = 48000/2;        %sample freq
 audio_recorder.UserData.trigger = 0;
 audio_recorder.UserData.maxCorr = 1;
 audio_recorder.UserData.corrIdx = 1;
@@ -26,6 +26,8 @@ audio_recorder.UserData.Rb = 480;       %bitrate
 audio_recorder.UserData.bpsymb = 2;     %bits/symb
 audio_recorder.UserData.preambleBits = kron([1 1 0 1],[1 1 1 1 1 0 0 1 1 0 1 0 1]);    %kroniker product B4xB13 = length 52
 audio_recorder.UserData.const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);
+audio_recorder.UserData.sPreamble = [];
+audio_recorder.UserData.corrAng = [];
 
 
 
@@ -64,12 +66,13 @@ end
 
 function audioTimerFcn(recObj, event, handles)
 
-if recObj.UserData.counter < 14
-   recObj.UserData.counter = recObj.UserData.counter + 1;
-else
-    stop(recObj)
+%if recObj.UserData.counter < 14
+%   recObj.UserData.counter = recObj.UserData.counter + 1;
+%else
+    %stop(recObj)
     %disp('Callback')
     %50798 - b4xb13
+if recObj.UserData.trigger == 0
     rx = getaudiodata(recObj);  %recorded data
     rx = rx/max(abs(rx));
 
@@ -90,10 +93,7 @@ else
     rxBaseband = rx'.*exp(-1i*2*pi*fc*(0:length(rx')-1)*Tsamp);
     
     %Match filter
-    %mfOutput = matchFilter(pulse, rxBaseband);
-    MF = fliplr(conj(pulse));
-    mfOutput1 = conv(pulse, rxBaseband);
-    mfOutput = mfOutput1(length(MF):end-length(MF)+1);
+    mfOutput = matchFilter(pulse, rxBaseband);
 
     %correlate received signal and preamble
     sPreamble = makePreamble(pulse,fsfd,2);
@@ -102,8 +102,6 @@ else
     corr = conv((mfOutput), fliplr(sPreamble));
     corr = corr/(sum(pwrRx/max(pwrRx))*sum(pwrPre/max(pwrPre))); %normalize by preamble and signal pwr
     %figure; subplot(2,1,1); plot(abs(corr)); subplot(2,1,2); plot(angle(corr))
-    
-    corr1 = xcorr(mfOutput,sPreamble);
    
 %     figure;
 %     subplot(2,1,1)
@@ -111,100 +109,146 @@ else
 %     subplot(2,1,2)
 %     plot(imag(corr))
     
-    [tmp,Tmax] = max(abs(corr));
+    %Find point of max correlation   
+    [maxCorr,maxIdx] = max(abs(corr));
     
-    if tmp > 30
-        
-        %Check if we must invert the signal
-         %if abs(min(real(corr))) > abs(max(real(corr)))
-             %mfOutput = mfOutput*exp(-1i*angle(corr(Tmax))); %rotate by 180 degrees;
-             %disp('Inverted')
-         %end
-        
-        delay = Tmax - length(sPreamble) + span*fsfd;
-        
-        %Clip the received signal
-        rxClipped = mfOutput(delay:50798+delay-2*(span*fsfd));
-        
-        rxClipped = rxClipped*exp(-1i*angle(corr(Tmax)));
-        
-        rxDown = conj(downsample(rxClipped,fsfd));
-        %rxDown = rxDown(1:242);
-        
-        %Symbol phase correction
-        [sPreamble,xPreamble] = makePreamble(pulse,fsfd,2);
-        %Find all rxVec points in 1+1i quadrant (upper right)
-        I1Preamb = find(real(xPreamble) > 0 & imag(xPreamble) > 0);
-        I2Preamb = find(real(xPreamble) < 0 & imag(xPreamble) > 0);
-        I3Preamb = find(real(xPreamble) < 0 & imag(xPreamble) < 0);
-        I4Preamb = find(real(xPreamble) > 0 & imag(xPreamble) < 0);
+    recObj.UserData.corrIdx = maxIdx;
+    recObj.UserData.maxCorr = maxCorr;
+    recObj.UserData.sPreamble = sPreamble;
+    recObj.UserData.corrAng = angle(corr(maxIdx));
 
-        phase1 = mean(angle(rxDown(I1Preamb)))*180/pi;
-        phase2 = mean(angle(rxDown(I2Preamb)))*180/pi;
-        phase3 = mean(angle(rxDown(I3Preamb)))*180/pi;
-        phase4 = mean(angle(rxDown(I4Preamb)))*180/pi;
-        deltaPhase1 = phase1-45;
-        deltaPhase2 = phase2-135;
-        deltaPhase3 = phase3+135;
-        deltaPhase4 = phase4+45;
-        deltaPhase = (deltaPhase1+deltaPhase2+deltaPhase3+deltaPhase4)/4
-        rxDown = rxDown*exp(-1i*deltaPhase*pi/180);
-
-        %scatterplot(rxDown)
-        
-        const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);
-        eucDist = abs(repmat(rxDown.',1,4) - repmat(const, length(rxDown), 1)).^2;
-        [tmp,mHat] = min(eucDist, [], 2);
-        %rxSymbols = const(mHat);
-        rxBitsBuffer = de2bi(mHat'-1, 2, 'left-msb')'; %make symbols into bits
-        rxBits = rxBitsBuffer(:)'; %write as a vector
-
-        %sum(rxBits(1:26) == [1 1 1 1 1 0 0 1 1 0 1 0 1 1 1 1 1 1 0 0 1 1 0 1 0 1])
-        
-        figure
-        subplot(2,1,1)
-        plot(real(mfOutput))
-        subplot(2,1,2)
-        plot(real(rxClipped))
-
-        % Step 1: save the estimated bits
-        recObj.UserData.pack = rxBits(53:end);
-
-        % Step 2: save the sampled symbols
-        recObj.UserData.const = rxDown(27:end)/max(abs(rxDown(27:end)));
-
-        % Step 3: provide the matched filter output for the eye diagram
-        recObj.UserData.eyed.r = rxClipped;
-        recObj.UserData.eyed.fsfd = fsfd;
-
-        % Step 4: Compute the PSD and save it. 
-        % !!!! NOTE !!!! the PSD should be computed on the BASE BAND signal BEFORE matched filtering
-        [pxx, f] = pwelch(rxBaseband,1024,768,1024, fs); % note that pwr_spect.f will be normalized frequencies
-        f = fftshift(f); %shift to be centered around fs
-        f(1:length(f)/2) = f(1:length(f)/2) - fs; % center to be around zero
-        p = fftshift(10*log10(pxx/max(pxx))); % shift, normalize and convert PSD to dB
-        recObj.UserData.pwr_spect.f = f;
-        recObj.UserData.pwr_spect.p = p;
-
-        % In order to make the GUI look at the data, we need to set the
-        % receive_complete flag equal to 1:
-        recObj.UserData.receive_complete = 1;
-        disp('Done')
+    
+    if recObj.UserData.maxCorr > 15     %maybe this can be increased
+        fprintf('Triggered ---->')
+        %recObj.UserData.corrIdx = maxIdx;
+        %recObj.UserData.maxCorr = maxCorr;
+        %recObj.UserData.sPreamble = sPreamble;
+        %recObj.UserData.corrAng = angle(corr(maxIdx));
+        recObj.UserData.trigger = 1;    %Set the trigger flag when threshold is hit
     end
-%  
-%     figure
-%     subplot(3,1,1)
-%     plot(real(rx))
-%     title('Raw')
-%     subplot(3,1,2)
-%     plot(real(rxBaseband))
-%     title('Down mod')
-%     subplot(3,1,3)
-%     plot(real(mfOutput))
-%     title('MF')
+elseif recObj.UserData.counter < 6
+            
+    recObj.UserData.counter = recObj.UserData.counter + 1;
+            
+elseif recObj.UserData.counter == 6
+    fprintf('Stopped ----->')
+    stop(recObj)
     
-    eyediagram(rxClipped, fsfd, 1/Rs);
+    rx = getaudiodata(recObj);  %recorded data
+    rx = rx/max(abs(rx));
+
+    fs = recObj.UserData.fs;
+    fc = recObj.UserData.fc;
+    Rb = recObj.UserData.Rb;
+    Rs = Rb/recObj.UserData.bpsymb;
+    fsfd = fs/Rs;
+    Ts = 1/Rs;
+    Tsamp = 1/fs;
+    alpha = 0.4;
+    span = 6;
+
+    %Make RRC pulse
+    [pulse, t] = rtrcpuls(alpha,Ts,fs,span);
+
+    %Down modulate rx signal
+    rxBaseband = rx'.*exp(-1i*2*pi*fc*(0:length(rx')-1)*Tsamp);
+    
+    %Match filter
+    mfOutput = matchFilter(pulse, rxBaseband);
+
+    %correlate received signal and preamble
+    sPreamble = makePreamble(pulse,fsfd,2);
+    [pwrRx, f] = pwelch(mfOutput,1024,768,1024, fs);
+    [pwrPre, f] = pwelch(sPreamble,1024,768,1024, fs);
+    corr = conv((mfOutput), fliplr(sPreamble));
+    corr = corr/(sum(pwrRx/max(pwrRx))*sum(pwrPre/max(pwrPre))); %normalize by preamble and signal pwr
+    %figure; subplot(2,1,1); plot(abs(corr)); subplot(2,1,2); plot(angle(corr))
+   
+%     figure;
+%     subplot(2,1,1)
+%     plot(real(corr))
+%     subplot(2,1,2)
+%     plot(imag(corr))
+    
+    %Find point of max correlation   
+    [maxCorr,maxIdx] = max(abs(corr)); 
+
+    %Find delay value for start of preamble
+    delay = maxIdx - length(sPreamble) + span*fsfd;
+
+    %Clip the received signal
+    val = 25398;
+    %val = 50798;
+    rxClipped = mfOutput(delay:val+delay-2*(span*fsfd));
+
+    %Multiply the rx signal by phase of correlation to correct the signal
+    %when there is a large imaginary spike in the correlation.
+    rxClipped = rxClipped*exp(-1i*recObj.UserData.corrAng);
+
+    %Downsample the rx signal to the actual received symbols
+    rxDown = conj(downsample(rxClipped,fsfd));
+
+    %Symbol phase correction
+    [sPreamble,xPreamble] = makePreamble(pulse,fsfd,2);
+    %Find all rxVec points in 1+1i quadrant (upper right)
+    I1Preamb = find(real(xPreamble) > 0 & imag(xPreamble) > 0);
+    I2Preamb = find(real(xPreamble) < 0 & imag(xPreamble) > 0);
+    I3Preamb = find(real(xPreamble) < 0 & imag(xPreamble) < 0);
+    I4Preamb = find(real(xPreamble) > 0 & imag(xPreamble) < 0);
+
+    phase1 = mean(angle(rxDown(I1Preamb)))*180/pi;
+    phase2 = mean(angle(rxDown(I2Preamb)))*180/pi;
+    phase3 = mean(angle(rxDown(I3Preamb)))*180/pi;
+    phase4 = mean(angle(rxDown(I4Preamb)))*180/pi;
+    deltaPhase1 = phase1-45;
+    deltaPhase2 = phase2-135;
+    deltaPhase3 = phase3+135;
+    deltaPhase4 = phase4+45;
+    deltaPhase = (deltaPhase1+deltaPhase2+deltaPhase3+deltaPhase4)/4;
+    rxDown = rxDown*exp(-1i*deltaPhase*pi/180);
+
+    %scatterplot(rxDown)
+
+    const = [(1+1i), (1-1i), (-1-1i), (-1+1i)]/sqrt(2);
+    eucDist = abs(repmat(rxDown.',1,4) - repmat(const, length(rxDown), 1)).^2;
+    [maxCorr,mHat] = min(eucDist, [], 2);
+    %rxSymbols = const(mHat);
+    rxBitsBuffer = de2bi(mHat'-1, 2, 'left-msb')'; %make symbols into bits
+    rxBits = rxBitsBuffer(:)'; %write as a vector
+
+    %sum(rxBits(1:26) == [1 1 1 1 1 0 0 1 1 0 1 0 1 1 1 1 1 1 0 0 1 1 0 1 0 1])
+
+%     figure
+%     subplot(2,1,1)
+%     plot(real(mfOutput))
+%     subplot(2,1,2)
+%     plot(real(rxClipped))
+
+    % Step 1: save the estimated bits
+    recObj.UserData.pack = rxBits(53:end);
+
+    % Step 2: save the sampled symbols
+    recObj.UserData.const = rxDown(27:end)/max(abs(rxDown(27:end)));
+
+    % Step 3: provide the matched filter output for the eye diagram
+    recObj.UserData.eyed.r = rxClipped;
+    recObj.UserData.eyed.fsfd = fsfd;
+
+    % Step 4: Compute the PSD and save it. 
+    % !!!! NOTE !!!! the PSD should be computed on the BASE BAND signal BEFORE matched filtering
+    [pxx, f] = pwelch(rxBaseband,1024,768,1024, fs); % note that pwr_spect.f will be normalized frequencies
+    f = fftshift(f); %shift to be centered around fs
+    f(1:length(f)/2) = f(1:length(f)/2) - fs; % center to be around zero
+    p = fftshift(10*log10(pxx/max(pxx))); % shift, normalize and convert PSD to dB
+    recObj.UserData.pwr_spect.f = f;
+    recObj.UserData.pwr_spect.p = p;
+
+    % In order to make the GUI look at the data, we need to set the
+    % receive_complete flag equal to 1:
+    disp('Done')
+    recObj.UserData.receive_complete = 1;
 end
+%end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Kind of works

@@ -20,7 +20,11 @@ bpsymb = log2(M);                               %bits per symbol
 Rb = round(fsymb*bpsymb);                       %bit rate [bit/s]
 fsfd = round(fs/fsymb)+1;                           %samples per symbol
 span = 6;
-preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
+%preamble = [1 1 1 1 1 0 0 1 1 0 1 0 1];    %length 13 barker
+%preamble = [1 1 1 0 0 0 1 0 0 1 0 1 1 1 0 0 0 1 0 0 1 0];   %preamble to be used -  2x 11 BC
+preamble = kron([1 1 0 1],[1 1 1 1 1 0 0 1 1 0 1 0 1]);
+%preamble = [1 1 1 1 1 0 0 1 1 0 1 0 1];
+%preamble = [preamble preamble];
 
 Rb = 480;
 Rs = Rb/bpsymb;
@@ -37,6 +41,10 @@ m_idx = bi2de(m, 'left-msb')'+1;    % Bits to symbol index, msb: the Most Signif
 x = const(m_idx);                   % Look up symbols using the indices
 x_upsample = upsample(x,fsfd);      % Space the symbols fsfd apart, to enable pulse shaping using conv.
 s = conv(pulse,x_upsample);         %Baseband signal to transmit
+length(s);
+
+%figure;
+%plot(real(s))
 
 %Modulated tx signal
 %tx_signal = s.*exp(-1i*2*pi*fc*(0:length(s)-1)*Tsamp); % Carrier Modulation/Upconversion 
